@@ -1,0 +1,18 @@
+[package]
+name = "dockerfile-sec-linter"
+version = "0.1.0"
+edition = "2021"
+authors = ["bighnaraj2008-ai <236182883+bighnaraj2008-ai@users.noreply.github.com>"]
+description = "A cloud security and cost-optimization Dockerfile static analyzer"
+license = "MIT"
+readme = "README.md"
+keywords = ["dockerfile", "linter", "security", "devops", "cloud-cost"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lib]
+name = "dockerfile_sec_linter"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dockerfile-sec-linter"
+path = "src/main.rs"
