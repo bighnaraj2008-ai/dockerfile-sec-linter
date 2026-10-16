@@ -58,3 +58,43 @@ CMD ["/app"]
 
     assert!(findings.is_empty());
 }
+#[test]
+fn test_cost002_uncleaned_package_cache_flagged() {
+    let dockerfile = DockerfileParser::parse_str(
+        r#"
+FROM alpine:3.19
+RUN apt-get update && apt-get install -y curl
+RUN apk add git
+RUN pip install flask
+"#,
+    )
+    .unwrap();
+
+    let rule = Cost002CleanPackageCache::new();
+    let config = Config::default();
+    let findings = rule.check(&dockerfile, &config);
+
+    assert_eq!(findings.len(), 3);
+    for f in &findings {
+        assert_eq!(f.rule_id, "COST002");
+    }
+}
+
+#[test]
+fn test_cost002_cleaned_package_cache_passes() {
+    let dockerfile = DockerfileParser::parse_str(
+        r#"
+FROM alpine:3.19
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache git
+RUN pip install --no-cache-dir flask
+"#,
+    )
+    .unwrap();
+
+    let rule = Cost002CleanPackageCache::new();
+    let config = Config::default();
+    let findings = rule.check(&dockerfile, &config);
+
+    assert!(findings.is_empty());
+}
