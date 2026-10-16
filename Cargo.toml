@@ -2,7 +2,7 @@
 name = "dockerfile-sec-linter"
 version = "0.1.0"
 edition = "2021"
-authors = ["bighnaraj2008-ai <236182883+bighnaraj2008-ai@users.noreply.github.com>"]
+authors = ["Antigravity Developer <developer@example.com>"]
 description = "A cloud security and cost-optimization Dockerfile static analyzer"
 license = "MIT"
 readme = "README.md"
@@ -13,7 +13,11 @@ categories = ["command-line-utilities", "development-tools"]
 clap = { version = "4.5", features = ["derive", "cargo"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+regex = "1.10"
+colored = "2.1"
 toml = "0.8"
+thiserror = "1.0"
+
 
 [lib]
 name = "dockerfile_sec_linter"
