@@ -223,3 +223,86 @@ impl DockerfileParser {
         }
     }
 }
+impl DockerfileParser {
+    fn parse_arg(rest: &str, line_number: usize, raw: &str) -> ArgInstruction {
+        let trimmed = rest.trim();
+        if let Some(pos) = trimmed.find('=') {
+            let (k, v) = trimmed.split_at(pos);
+            ArgInstruction {
+                name: k.trim().to_string(),
+                default_value: Some(v[1..].trim().trim_matches('"').trim_matches('\'').to_string()),
+                line_number,
+                raw: raw.to_string(),
+            }
+        } else {
+            ArgInstruction {
+                name: trimmed.to_string(),
+                default_value: None,
+                line_number,
+                raw: raw.to_string(),
+            }
+        }
+    }
+
+    fn parse_copy(rest: &str, line_number: usize, raw: &str) -> CopyInstruction {
+        let tokens = Self::tokenize_whitespace(rest);
+        let mut from_stage = None;
+        let mut chown = None;
+        let mut chmod = None;
+        let mut paths = Vec::new();
+
+        for tok in tokens {
+            if let Some(s) = tok.strip_prefix("--from=") {
+                from_stage = Some(s.to_string());
+            } else if let Some(c) = tok.strip_prefix("--chown=") {
+                chown = Some(c.to_string());
+            } else if let Some(m) = tok.strip_prefix("--chmod=") {
+                chmod = Some(m.to_string());
+            } else {
+                paths.push(tok);
+            }
+        }
+
+        let destination = paths.pop().unwrap_or_default();
+        let sources = paths;
+
+        CopyInstruction {
+            from_stage,
+            chown,
+            chmod,
+            sources,
+            destination,
+            line_number,
+            raw: raw.to_string(),
+        }
+    }
+
+    fn parse_add(rest: &str, line_number: usize, raw: &str) -> AddInstruction {
+        let tokens = Self::tokenize_whitespace(rest);
+        let mut chown = None;
+        let mut chmod = None;
+        let mut paths = Vec::new();
+
+        for tok in tokens {
+            if let Some(c) = tok.strip_prefix("--chown=") {
+                chown = Some(c.to_string());
+            } else if let Some(m) = tok.strip_prefix("--chmod=") {
+                chmod = Some(m.to_string());
+            } else {
+                paths.push(tok);
+            }
+        }
+
+        let destination = paths.pop().unwrap_or_default();
+        let sources = paths;
+
+        AddInstruction {
+            chown,
+            chmod,
+            sources,
+            destination,
+            line_number,
+            raw: raw.to_string(),
+        }
+    }
+}
