@@ -1,0 +1,36 @@
+# .dockerlint.example.toml
+# Configuration file for dockerfile-sec-linter
+# Copy this file to .dockerlint.toml in your project root or pass via --config <path>
+
+# Rule IDs to ignore during analysis
+# Available rules:
+#   SEC001  - Missing or root USER instruction in final stage
+#   SEC002  - Unpinned base image tag (:latest or untagged)
+#   SEC003  - Hardcoded secrets or sensitive credentials in ENV/ARG
+#   SEC004  - Using ADD instead of COPY for local files/unverified remote URLs
+#   SEC005  - Sudo command invocation inside RUN instructions
+#   COST001 - Bloated full-OS base images in final runtime stage
+#   COST002 - Package manager cache not cleaned in the same RUN layer
+#   COST003 - Consecutive RUN instructions that should be combined
+ignore_rules = [
+    # "COST003",
+]
+
+# Minimum severity threshold to report: "low", "medium", "high", "critical"
+# default: "low"
+min_severity = "low"
+
+# Minimum score threshold (0-100). If total score drops below this, exit with error if enabled.
+min_score = 70
+
+# Fail-on severity threshold: "low", "medium", "high", "critical"
+# Any finding equal to or above this severity will cause non-zero exit code.
+fail_on = "high"
+
+# Allow running as root in intermediate build stages (only final stage enforced if true)
+allow_root_in_build_stages = true
+
+# Custom allowed base image substrings (e.g. internal company base images)
+allowed_base_images = [
+    # "my-internal-registry.corp/golden-base:*",
+]
