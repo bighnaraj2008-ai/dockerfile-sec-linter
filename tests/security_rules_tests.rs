@@ -94,6 +94,33 @@ CMD ["python"]
 
     assert!(findings.is_empty());
 }
+
+#[test]
+fn test_sec002_multi_stage_alias_passes() {
+    let dockerfile = DockerfileParser::parse_str(
+        r#"
+FROM golang:1.22-alpine AS builder
+RUN go build -o /app
+
+FROM builder AS tester
+RUN /app test
+
+FROM alpine:3.19
+COPY --from=builder /app /app
+USER appuser
+CMD ["/app"]
+"#,
+    )
+    .unwrap();
+
+    let rule = Sec002PinnedBaseImage::new();
+    let config = Config::default();
+    let findings = rule.check(&dockerfile, &config);
+
+    // Only real images are evaluated, builder stage alias is not flagged as unpinned
+    assert!(findings.is_empty());
+}
+
 #[test]
 fn test_sec003_hardcoded_secrets_flagged() {
     let dockerfile = DockerfileParser::parse_str(
@@ -133,4 +160,44 @@ ARG SECRET_KEY="changeme"
     let findings = rule.check(&dockerfile, &config);
 
     assert!(findings.is_empty());
+}
+
+#[test]
+fn test_sec004_add_vs_copy() {
+    let dockerfile = DockerfileParser::parse_str(
+        r#"
+FROM alpine:3.19
+ADD script.py /app/script.py
+ADD https://example.com/binary /usr/local/bin/binary
+ADD bundle.tar.gz /app/
+"#,
+    )
+    .unwrap();
+
+    let rule = Sec004AvoidAdd::new();
+    let config = Config::default();
+    let findings = rule.check(&dockerfile, &config);
+
+    // script.py (local file) and https:// (unverified remote) are flagged, bundle.tar.gz is allowed
+    assert_eq!(findings.len(), 2);
+    assert_eq!(findings[0].rule_id, "SEC004");
+    assert_eq!(findings[1].rule_id, "SEC004");
+}
+
+#[test]
+fn test_sec005_sudo_usage() {
+    let dockerfile = DockerfileParser::parse_str(
+        r#"
+FROM ubuntu:22.04
+RUN sudo apt-get update && sudo apt-get install -y curl
+"#,
+    )
+    .unwrap();
+
+    let rule = Sec005NoSudo::new();
+    let config = Config::default();
+    let findings = rule.check(&dockerfile, &config);
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, "SEC005");
 }
