@@ -84,3 +84,83 @@ impl DockerfileParser {
         logical_lines
     }
 }
+impl DockerfileParser {
+    fn parse_from(rest: &str, line_number: usize, raw: &str) -> Result<FromInstruction> {
+        let tokens = Self::tokenize_whitespace(rest);
+        if tokens.is_empty() {
+            return Err(LinterError::Parse {
+                line: line_number,
+                message: "FROM instruction missing base image target".to_string(),
+            });
+        }
+
+        let mut platform = None;
+        let mut image_token_idx = 0;
+
+        for (i, tok) in tokens.iter().enumerate() {
+            if let Some(p) = tok.strip_prefix("--platform=") {
+                platform = Some(p.to_string());
+                image_token_idx = i + 1;
+            } else {
+                break;
+            }
+        }
+
+        if image_token_idx >= tokens.len() {
+            return Err(LinterError::Parse {
+                line: line_number,
+                message: "FROM instruction missing base image target after flags".to_string(),
+            });
+        }
+
+        let full_image = tokens[image_token_idx].clone();
+        let mut alias = None;
+        for i in (image_token_idx + 1)..tokens.len() {
+            if tokens[i].eq_ignore_ascii_case("AS") && i + 1 < tokens.len() {
+                alias = Some(tokens[i + 1].clone());
+                break;
+            }
+        }
+
+        let (image_name, tag, digest) = Self::parse_image_components(&full_image);
+
+        Ok(FromInstruction {
+            full_image,
+            image_name,
+            tag,
+            digest,
+            alias,
+            platform,
+            line_number,
+            raw: raw.to_string(),
+        })
+    }
+
+    fn parse_image_components(full: &str) -> (String, Option<String>, Option<String>) {
+        let mut digest = None;
+        let mut remainder = full;
+
+        if let Some(pos) = full.find('@') {
+            digest = Some(full[pos + 1..].to_string());
+            remainder = &full[..pos];
+        }
+
+        let mut tag = None;
+        let mut repo = remainder.to_string();
+
+        if let Some(last_colon) = remainder.rfind(':') {
+            let last_slash = remainder.rfind('/');
+            let is_tag_colon = match last_slash {
+                Some(slash_pos) => last_colon > slash_pos,
+                None => true,
+            };
+
+            if is_tag_colon {
+                tag = Some(remainder[last_colon + 1..].to_string());
+                repo = remainder[..last_colon].to_string();
+            }
+        }
+
+        (repo, tag, digest)
+    }
+}
