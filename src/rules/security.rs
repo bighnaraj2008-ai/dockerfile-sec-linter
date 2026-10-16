@@ -28,6 +28,7 @@ impl Default for Sec001NonRootUser {
         Self::new()
     }
 }
+
 impl Rule for Sec001NonRootUser {
     fn metadata(&self) -> &RuleMetadata {
         &self.meta
@@ -35,11 +36,14 @@ impl Rule for Sec001NonRootUser {
 
     fn check(&self, dockerfile: &Dockerfile, config: &Config) -> Vec<Finding> {
         let mut findings = Vec::new();
+
         if dockerfile.stages.is_empty() {
             return findings;
         }
 
-        let stages_to_check: Vec<(usize, &crate::ast::Stage)> = if config.allow_root_in_build_stages {
+        // Determine which stages to check based on configuration
+        let stages_to_check: Vec<(usize, &crate::ast::Stage)> = if config.allow_root_in_build_stages
+        {
             if let Some(final_stage) = dockerfile.final_stage() {
                 vec![(dockerfile.stages.len() - 1, final_stage)]
             } else {
@@ -50,7 +54,9 @@ impl Rule for Sec001NonRootUser {
         };
 
         for (stage_idx, stage) in stages_to_check {
+            // Scratch images without any commands might be raw root filesystems
             let last_user = stage.last_user();
+
             match last_user {
                 None => {
                     let line_number = stage.from.line_number;
@@ -93,6 +99,7 @@ impl Rule for Sec001NonRootUser {
         findings
     }
 }
+
 /// SEC002: Unpinned base image tag (:latest or untagged)
 pub struct Sec002PinnedBaseImage {
     meta: RuleMetadata,
@@ -128,12 +135,14 @@ impl Rule for Sec002PinnedBaseImage {
         let mut findings = Vec::new();
 
         for (stage_idx, stage) in dockerfile.stages.iter().enumerate() {
+            // Stage aliases defined before this stage are valid local targets
             let prev_aliases: Vec<String> = dockerfile.stages[..stage_idx]
                 .iter()
                 .filter_map(|s| s.alias.clone().or_else(|| s.from.alias.clone()))
                 .collect();
 
             if prev_aliases.contains(&stage.from.image_name) {
+                // This stage is built FROM an earlier stage in the same Dockerfile
                 continue;
             }
 
@@ -162,6 +171,7 @@ impl Rule for Sec002PinnedBaseImage {
         findings
     }
 }
+
 /// SEC003: Hardcoded secrets or sensitive credentials in ENV or ARG
 pub struct Sec003HardcodedSecrets {
     meta: RuleMetadata,
@@ -194,6 +204,7 @@ impl Sec003HardcodedSecrets {
         if trimmed.is_empty() {
             return true;
         }
+        // Environment variable expansions like $FOO or ${FOO}
         if trimmed.starts_with('$') || (trimmed.starts_with("${") && trimmed.ends_with('}')) {
             return true;
         }
@@ -225,6 +236,7 @@ impl Rule for Sec003HardcodedSecrets {
     fn check(&self, dockerfile: &Dockerfile, _config: &Config) -> Vec<Finding> {
         let mut findings = Vec::new();
 
+        // Check global args
         for arg in &dockerfile.global_args {
             if let Some(default_val) = &arg.default_value {
                 let key_matches = self.sensitive_key_regex.is_match(&arg.name);
@@ -249,6 +261,7 @@ impl Rule for Sec003HardcodedSecrets {
             }
         }
 
+        // Check each stage
         for (stage_idx, stage) in dockerfile.stages.iter().enumerate() {
             for inst in &stage.instructions {
                 match inst {
@@ -299,6 +312,133 @@ impl Rule for Sec003HardcodedSecrets {
                         }
                     }
                     _ => {}
+                }
+            }
+        }
+
+        findings
+    }
+}
+
+/// SEC004: Using ADD instead of COPY for local files or unverified remote URLs
+pub struct Sec004AvoidAdd {
+    meta: RuleMetadata,
+}
+
+impl Sec004AvoidAdd {
+    pub fn new() -> Self {
+        Self {
+            meta: RuleMetadata {
+                id: "SEC004",
+                name: "Insecure or ambiguous ADD instruction",
+                category: Category::Security,
+                severity: Severity::Medium,
+                description: "ADD has implicit behaviors including unexpected tar extraction and unverified remote HTTP downloads.",
+                remediation: "Use 'COPY' for local files. For remote downloads, use 'RUN curl/wget' with sha256 checksum verification.",
+            },
+        }
+    }
+}
+
+impl Default for Sec004AvoidAdd {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Rule for Sec004AvoidAdd {
+    fn metadata(&self) -> &RuleMetadata {
+        &self.meta
+    }
+
+    fn check(&self, dockerfile: &Dockerfile, _config: &Config) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        for (stage_idx, stage) in dockerfile.stages.iter().enumerate() {
+            for inst in &stage.instructions {
+                if let Instruction::Add(add) = inst {
+                    // Legitimate use: local tarball auto-extraction
+                    if add.is_archive_extraction() && !add.has_remote_url() {
+                        continue;
+                    }
+
+                    let reason = if add.has_remote_url() {
+                        "ADD fetches remote URLs without cryptographic checksum verification"
+                    } else {
+                        "ADD used for standard file copy; use COPY instead for predictable file transfer"
+                    };
+
+                    findings.push(Finding {
+                        rule_id: self.meta.id.to_string(),
+                        rule_name: self.meta.name.to_string(),
+                        category: self.meta.category,
+                        severity: self.meta.severity,
+                        line_number: add.line_number,
+                        message: format!("{}: {}", reason, add.sources.join(" ")),
+                        remediation: self.meta.remediation.to_string(),
+                        code_snippet: Some(add.raw.clone()),
+                        stage_index: stage_idx,
+                    });
+                }
+            }
+        }
+
+        findings
+    }
+}
+
+/// SEC005: Usage of sudo inside RUN instructions
+pub struct Sec005NoSudo {
+    meta: RuleMetadata,
+    sudo_regex: Regex,
+}
+
+impl Sec005NoSudo {
+    pub fn new() -> Self {
+        Self {
+            meta: RuleMetadata {
+                id: "SEC005",
+                name: "Usage of 'sudo' inside RUN instruction",
+                category: Category::Security,
+                severity: Severity::Medium,
+                description: "Executing 'sudo' inside container build layers is unnecessary and breaks container security isolation.",
+                remediation: "Run build commands directly as root during image build layers before switching to an unprivileged USER.",
+            },
+            sudo_regex: Regex::new(r"(?i)\b(sudo)(\s+|$)").expect("Valid regex"),
+        }
+    }
+}
+
+impl Default for Sec005NoSudo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Rule for Sec005NoSudo {
+    fn metadata(&self) -> &RuleMetadata {
+        &self.meta
+    }
+
+    fn check(&self, dockerfile: &Dockerfile, _config: &Config) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        for (stage_idx, stage) in dockerfile.stages.iter().enumerate() {
+            for inst in &stage.instructions {
+                if let Instruction::Run(run) = inst {
+                    if self.sudo_regex.is_match(&run.command) {
+                        findings.push(Finding {
+                            rule_id: self.meta.id.to_string(),
+                            rule_name: self.meta.name.to_string(),
+                            category: self.meta.category,
+                            severity: self.meta.severity,
+                            line_number: run.line_number,
+                            message: "Detected 'sudo' command in RUN instruction".to_string(),
+                            remediation: self.meta.remediation.to_string(),
+                            code_snippet: Some(run.raw.clone()),
+                            stage_index: stage_idx,
+                        });
+                    }
                 }
             }
         }
