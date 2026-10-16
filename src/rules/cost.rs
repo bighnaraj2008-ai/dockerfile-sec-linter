@@ -44,12 +44,15 @@ impl Rule for Cost001BloatedBaseImage {
 
     fn check(&self, dockerfile: &Dockerfile, config: &Config) -> Vec<Finding> {
         let mut findings = Vec::new();
+
         let final_stage = match dockerfile.final_stage() {
             Some(s) => s,
             None => return findings,
         };
+
         let final_idx = dockerfile.stages.len() - 1;
 
+        // Stage alias exemption: check if final stage is built from an earlier stage
         let prev_aliases: Vec<String> = dockerfile.stages[..final_idx]
             .iter()
             .filter_map(|s| s.alias.clone().or_else(|| s.from.alias.clone()))
@@ -59,6 +62,7 @@ impl Rule for Cost001BloatedBaseImage {
             return findings;
         }
 
+        // Whitelisted images
         if config
             .allowed_base_images
             .iter()
@@ -95,6 +99,7 @@ impl Rule for Cost001BloatedBaseImage {
         findings
     }
 }
+
 /// COST002: Package manager cache not cleaned in the same RUN layer
 pub struct Cost002CleanPackageCache {
     meta: RuleMetadata,
@@ -155,6 +160,7 @@ impl Rule for Cost002CleanPackageCache {
                 if let Instruction::Run(run) = inst {
                     let cmd = &run.command;
 
+                    // Check APT
                     if self.apt_install_regex.is_match(cmd) {
                         let has_clean = self.apt_clean_regex.is_match(cmd);
                         let has_no_recommends = self.apt_no_recommends_regex.is_match(cmd);
@@ -182,6 +188,7 @@ impl Rule for Cost002CleanPackageCache {
                         }
                     }
 
+                    // Check APK
                     if self.apk_add_regex.is_match(cmd) && !self.apk_clean_regex.is_match(cmd) {
                         findings.push(Finding {
                             rule_id: self.meta.id.to_string(),
@@ -196,6 +203,7 @@ impl Rule for Cost002CleanPackageCache {
                         });
                     }
 
+                    // Check PIP
                     if self.pip_install_regex.is_match(cmd) && !self.pip_cache_regex.is_match(cmd) {
                         findings.push(Finding {
                             rule_id: self.meta.id.to_string(),
@@ -210,6 +218,7 @@ impl Rule for Cost002CleanPackageCache {
                         });
                     }
 
+                    // Check YUM / DNF
                     if self.yum_install_regex.is_match(cmd) && !self.yum_clean_regex.is_match(cmd) {
                         findings.push(Finding {
                             rule_id: self.meta.id.to_string(),
@@ -222,6 +231,72 @@ impl Rule for Cost002CleanPackageCache {
                             code_snippet: Some(run.raw.clone()),
                             stage_index: stage_idx,
                         });
+                    }
+                }
+            }
+        }
+
+        findings
+    }
+}
+
+/// COST003: Consecutive RUN instructions that should be combined with &&
+pub struct Cost003ChainRunLayers {
+    meta: RuleMetadata,
+}
+
+impl Cost003ChainRunLayers {
+    pub fn new() -> Self {
+        Self {
+            meta: RuleMetadata {
+                id: "COST003",
+                name: "Consecutive RUN instructions not chained",
+                category: Category::CostEfficiency,
+                severity: Severity::Low,
+                description: "Consecutive RUN instructions generate separate image layers and disk write operations, increasing total image size.",
+                remediation: "Combine consecutive RUN instructions into a single RUN layer using '&& \\'.",
+            },
+        }
+    }
+}
+
+impl Default for Cost003ChainRunLayers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Rule for Cost003ChainRunLayers {
+    fn metadata(&self) -> &RuleMetadata {
+        &self.meta
+    }
+
+    fn check(&self, dockerfile: &Dockerfile, _config: &Config) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        for (stage_idx, stage) in dockerfile.stages.iter().enumerate() {
+            let mut previous_was_run = false;
+
+            for inst in &stage.instructions {
+                match inst {
+                    Instruction::Run(run) => {
+                        if previous_was_run {
+                            findings.push(Finding {
+                                rule_id: self.meta.id.to_string(),
+                                rule_name: self.meta.name.to_string(),
+                                category: self.meta.category,
+                                severity: self.meta.severity,
+                                line_number: run.line_number,
+                                message: "Consecutive RUN instruction creates an unnecessary filesystem layer".to_string(),
+                                remediation: self.meta.remediation.to_string(),
+                                code_snippet: Some(run.raw.clone()),
+                                stage_index: stage_idx,
+                            });
+                        }
+                        previous_was_run = true;
+                    }
+                    _ => {
+                        previous_was_run = false;
                     }
                 }
             }
