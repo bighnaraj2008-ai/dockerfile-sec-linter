@@ -94,3 +94,43 @@ CMD ["python"]
 
     assert!(findings.is_empty());
 }
+#[test]
+fn test_sec003_hardcoded_secrets_flagged() {
+    let dockerfile = DockerfileParser::parse_str(
+        r#"
+FROM alpine:3.19
+ARG DB_PASSWORD="SuperSecretPassword123"
+ENV API_KEY="mock_production_api_token_value_99887766"
+ENV AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+"#,
+    )
+    .unwrap();
+
+    let rule = Sec003HardcodedSecrets::new();
+    let config = Config::default();
+    let findings = rule.check(&dockerfile, &config);
+
+    assert_eq!(findings.len(), 3);
+    for f in &findings {
+        assert_eq!(f.rule_id, "SEC003");
+    }
+}
+
+#[test]
+fn test_sec003_placeholders_and_env_expansions_allowed() {
+    let dockerfile = DockerfileParser::parse_str(
+        r#"
+FROM alpine:3.19
+ARG DB_PASSWORD=""
+ENV API_KEY="${APP_API_KEY}"
+ARG SECRET_KEY="changeme"
+"#,
+    )
+    .unwrap();
+
+    let rule = Sec003HardcodedSecrets::new();
+    let config = Config::default();
+    let findings = rule.check(&dockerfile, &config);
+
+    assert!(findings.is_empty());
+}
