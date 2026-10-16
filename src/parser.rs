@@ -164,3 +164,62 @@ impl DockerfileParser {
         (repo, tag, digest)
     }
 }
+impl DockerfileParser {
+    fn parse_run(rest: &str, line_number: usize, raw: &str) -> RunInstruction {
+        let trimmed = rest.trim();
+        let is_exec_form = trimmed.starts_with('[') && trimmed.ends_with(']');
+        RunInstruction {
+            command: trimmed.to_string(),
+            is_exec_form,
+            line_number,
+            raw: raw.to_string(),
+        }
+    }
+
+    fn parse_user(rest: &str, line_number: usize, raw: &str) -> UserInstruction {
+        let trimmed = rest.trim();
+        let parts: Vec<&str> = trimmed.splitn(2, ':').collect();
+        let user = parts[0].trim().to_string();
+        let group = if parts.len() > 1 {
+            Some(parts[1].trim().to_string())
+        } else {
+            None
+        };
+
+        UserInstruction {
+            user,
+            group,
+            line_number,
+            raw: raw.to_string(),
+        }
+    }
+
+    fn parse_env(rest: &str, line_number: usize, raw: &str) -> EnvInstruction {
+        let trimmed = rest.trim();
+        let mut vars = Vec::new();
+
+        if trimmed.contains('=') {
+            let tokens = Self::tokenize_key_values(trimmed);
+            for (k, v) in tokens {
+                vars.push((k, v));
+            }
+        } else {
+            let tokens = Self::tokenize_whitespace(trimmed);
+            if !tokens.is_empty() {
+                let key = tokens[0].clone();
+                let val = if tokens.len() > 1 {
+                    tokens[1..].join(" ")
+                } else {
+                    String::new()
+                };
+                vars.push((key, val));
+            }
+        }
+
+        EnvInstruction {
+            vars,
+            line_number,
+            raw: raw.to_string(),
+        }
+    }
+}
