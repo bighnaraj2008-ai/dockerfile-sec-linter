@@ -11,7 +11,7 @@ env:
 
 jobs:
   test:
-    name: Test Suite
+    name: Test & Lint Suite
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -19,6 +19,23 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check code formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy Linter
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Run Test Suite
         run: cargo test --all-targets --verbose
+
+      - name: Run CLI against Fixtures
+        run: |
+          cargo run -- tests/fixtures/Dockerfile.optimized
+          # Vulnerable Dockerfile should fail with policy flag
+          cargo run -- tests/fixtures/Dockerfile.vulnerable --fail-on high || true
