@@ -162,3 +162,147 @@ impl Rule for Sec002PinnedBaseImage {
         findings
     }
 }
+/// SEC003: Hardcoded secrets or sensitive credentials in ENV or ARG
+pub struct Sec003HardcodedSecrets {
+    meta: RuleMetadata,
+    sensitive_key_regex: Regex,
+    value_secret_regex: Regex,
+}
+
+impl Sec003HardcodedSecrets {
+    pub fn new() -> Self {
+        Self {
+            meta: RuleMetadata {
+                id: "SEC003",
+                name: "Hardcoded secret or credential",
+                category: Category::Security,
+                severity: Severity::Critical,
+                description: "Hardcoded secrets in ENV or ARG instructions are permanently baked into container image layer metadata.",
+                remediation: "Use BuildKit secrets mount (`RUN --mount=type=secret`) or inject environment variables at container runtime.",
+            },
+            sensitive_key_regex: Regex::new(
+                r"(?i)(secret|password|passwd|api_key|apikey|auth_token|access_token|private_key|aws_access_key|aws_secret|client_secret|db_pass|ssh_key)"
+            ).expect("Valid regex"),
+            value_secret_regex: Regex::new(
+                r"(?i)(AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|xox[baprs]-[0-9a-zA-Z]{10,48}|-----BEGIN [A-Z ]*PRIVATE KEY-----)"
+            ).expect("Valid regex"),
+        }
+    }
+
+    fn is_placeholder(val: &str) -> bool {
+        let trimmed = val.trim().trim_matches('"').trim_matches('\'');
+        if trimmed.is_empty() {
+            return true;
+        }
+        if trimmed.starts_with('$') || (trimmed.starts_with("${") && trimmed.ends_with('}')) {
+            return true;
+        }
+        let lower = trimmed.to_lowercase();
+        lower == "changeme"
+            || lower == "dummy"
+            || lower == "placeholder"
+            || lower == "test"
+            || lower == "todo"
+            || lower == "none"
+            || lower == "null"
+            || lower == "false"
+            || lower == "true"
+            || lower == "example"
+    }
+}
+
+impl Default for Sec003HardcodedSecrets {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Rule for Sec003HardcodedSecrets {
+    fn metadata(&self) -> &RuleMetadata {
+        &self.meta
+    }
+
+    fn check(&self, dockerfile: &Dockerfile, _config: &Config) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        for arg in &dockerfile.global_args {
+            if let Some(default_val) = &arg.default_value {
+                let key_matches = self.sensitive_key_regex.is_match(&arg.name);
+                let val_matches = self.value_secret_regex.is_match(default_val);
+
+                if (key_matches && !Self::is_placeholder(default_val)) || val_matches {
+                    findings.push(Finding {
+                        rule_id: self.meta.id.to_string(),
+                        rule_name: self.meta.name.to_string(),
+                        category: self.meta.category,
+                        severity: self.meta.severity,
+                        line_number: arg.line_number,
+                        message: format!(
+                            "Potentially hardcoded secret detected in global ARG '{}'",
+                            arg.name
+                        ),
+                        remediation: self.meta.remediation.to_string(),
+                        code_snippet: Some(arg.raw.clone()),
+                        stage_index: 0,
+                    });
+                }
+            }
+        }
+
+        for (stage_idx, stage) in dockerfile.stages.iter().enumerate() {
+            for inst in &stage.instructions {
+                match inst {
+                    Instruction::Arg(arg) => {
+                        if let Some(default_val) = &arg.default_value {
+                            let key_matches = self.sensitive_key_regex.is_match(&arg.name);
+                            let val_matches = self.value_secret_regex.is_match(default_val);
+
+                            if (key_matches && !Self::is_placeholder(default_val)) || val_matches {
+                                findings.push(Finding {
+                                    rule_id: self.meta.id.to_string(),
+                                    rule_name: self.meta.name.to_string(),
+                                    category: self.meta.category,
+                                    severity: self.meta.severity,
+                                    line_number: arg.line_number,
+                                    message: format!(
+                                        "Potentially hardcoded secret detected in ARG '{}'",
+                                        arg.name
+                                    ),
+                                    remediation: self.meta.remediation.to_string(),
+                                    code_snippet: Some(arg.raw.clone()),
+                                    stage_index: stage_idx,
+                                });
+                            }
+                        }
+                    }
+                    Instruction::Env(env) => {
+                        for (key, val) in &env.vars {
+                            let key_matches = self.sensitive_key_regex.is_match(key);
+                            let val_matches = self.value_secret_regex.is_match(val);
+
+                            if (key_matches && !Self::is_placeholder(val)) || val_matches {
+                                findings.push(Finding {
+                                    rule_id: self.meta.id.to_string(),
+                                    rule_name: self.meta.name.to_string(),
+                                    category: self.meta.category,
+                                    severity: self.meta.severity,
+                                    line_number: env.line_number,
+                                    message: format!(
+                                        "Hardcoded sensitive secret or credential found in ENV variable '{}'",
+                                        key
+                                    ),
+                                    remediation: self.meta.remediation.to_string(),
+                                    code_snippet: Some(env.raw.clone()),
+                                    stage_index: stage_idx,
+                                });
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        findings
+    }
+}
