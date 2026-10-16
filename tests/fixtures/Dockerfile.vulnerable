@@ -1,0 +1,30 @@
+# Vulnerable Dockerfile demonstrating all anti-patterns for dockerfile-sec-linter
+# Flags SEC001, SEC002, SEC003, SEC004, SEC005, COST001, COST002, COST003
+
+# SEC002: Unpinned base image tag (:latest)
+# COST001: Heavyweight full OS base image (ubuntu)
+FROM ubuntu:latest
+
+# SEC003: Hardcoded sensitive credentials in ARG and ENV
+ARG AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+ARG DB_PASSWORD="supersecretpassword123"
+ENV API_KEY="mock_production_secret_token_123456789"
+
+# SEC004: Using ADD for regular local files instead of COPY
+ADD server.py /app/server.py
+
+# SEC005: Usage of sudo in RUN instruction
+RUN sudo apt-get update
+
+# COST002: Package manager cache not cleaned & missing --no-install-recommends
+# COST003: Consecutive RUN instruction
+RUN apt-get install -y curl python3 python3-pip
+
+# COST002: pip install without --no-cache-dir
+# COST003: Consecutive RUN instruction
+RUN pip install flask requests
+
+# SEC001: Missing non-root USER instruction (runs as root by default)
+WORKDIR /app
+EXPOSE 8080
+CMD ["python3", "server.py"]
