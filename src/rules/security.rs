@@ -93,3 +93,72 @@ impl Rule for Sec001NonRootUser {
         findings
     }
 }
+/// SEC002: Unpinned base image tag (:latest or untagged)
+pub struct Sec002PinnedBaseImage {
+    meta: RuleMetadata,
+}
+
+impl Sec002PinnedBaseImage {
+    pub fn new() -> Self {
+        Self {
+            meta: RuleMetadata {
+                id: "SEC002",
+                name: "Unpinned base image tag",
+                category: Category::Security,
+                severity: Severity::High,
+                description: "Using ':latest' or omitting base image tags produces non-deterministic builds and risks supply chain vulnerabilities.",
+                remediation: "Pin base image tag to an immutable sha256 digest or a specific release version (e.g. 'node:20.11-alpine').",
+            },
+        }
+    }
+}
+
+impl Default for Sec002PinnedBaseImage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Rule for Sec002PinnedBaseImage {
+    fn metadata(&self) -> &RuleMetadata {
+        &self.meta
+    }
+
+    fn check(&self, dockerfile: &Dockerfile, _config: &Config) -> Vec<Finding> {
+        let mut findings = Vec::new();
+
+        for (stage_idx, stage) in dockerfile.stages.iter().enumerate() {
+            let prev_aliases: Vec<String> = dockerfile.stages[..stage_idx]
+                .iter()
+                .filter_map(|s| s.alias.clone().or_else(|| s.from.alias.clone()))
+                .collect();
+
+            if prev_aliases.contains(&stage.from.image_name) {
+                continue;
+            }
+
+            if stage.from.image_name == "scratch" {
+                continue;
+            }
+
+            if !stage.from.is_pinned() {
+                findings.push(Finding {
+                    rule_id: self.meta.id.to_string(),
+                    rule_name: self.meta.name.to_string(),
+                    category: self.meta.category,
+                    severity: self.meta.severity,
+                    line_number: stage.from.line_number,
+                    message: format!(
+                        "Base image '{}' is unpinned (missing tag or using ':latest')",
+                        stage.from.full_image
+                    ),
+                    remediation: self.meta.remediation.to_string(),
+                    code_snippet: Some(stage.from.raw.clone()),
+                    stage_index: stage_idx,
+                });
+            }
+        }
+
+        findings
+    }
+}
